@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 时代学计算机基础 · 动画</title>
+  <style>
+    :root {
+      --bg: #e7e1d6;
+      --paper: #fbf7f0;
+      --ink: #1c1915;
+      --muted: #6d655b;
+      --line: #e4dacb;
+      --teal: #0f6b66;
+      --shadow: 0 16px 40px rgba(70, 48, 20, 0.08);
+      --sans: "WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--sans);
+      background:
+        radial-gradient(900px 420px at 0% -10%, rgba(255, 255, 255, 0.75), transparent 55%),
+        var(--bg);
+    }
+    main { max-width: 760px; margin: 48px auto 72px; padding: 0 20px; }
+    .kicker { margin: 0 0 6px; color: var(--muted); letter-spacing: 0.08em; font-size: 12px; }
+    h1 { margin: 0; font-size: 34px; letter-spacing: -0.03em; }
+    .lead { margin: 12px 0 0; line-height: 1.7; font-size: 16px; }
+    .cards { list-style: none; margin: 28px 0 0; padding: 0; display: grid; gap: 12px; }
+    .cards a {
+      display: block; text-decoration: none; color: inherit;
+      background: var(--paper); border: 1px solid var(--line); border-radius: 18px;
+      padding: 16px 18px; box-shadow: var(--shadow);
+    }
+    .cards a:hover { border-color: #c9bead; }
+    .tag { color: var(--teal); font-size: 12px; letter-spacing: 0.06em; }
+    .cards strong { display: block; margin: 4px 0; font-size: 18px; }
+    .cards span { color: var(--muted); font-size: 14px; line-height: 1.6; }
+    footer { margin-top: 28px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+    a.inline { color: var(--teal); }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="kicker">学习笔记 · 可交互动画</p>
+    <h1>AI 时代学计算机基础</h1>
+    <p class="lead">先看它怎么动，再回到文字里问为什么。能暂停，能单步，丢包率可以自己拉。</p>
+    <ul class="cards">
+      <li>
+        <a href="06-network/tcp/viz/handshake.html">
+          <div class="tag">06 网络 · TCP</div>
+          <strong>三次握手与四次挥手</strong>
+          <span>序号、确认号、两边的状态。把丢包率拉高，看超时以后序号变不变。</span>
+        </a>
+      </li>
+      <li>
+        <a href="06-network/tcp/viz/sliding-window.html">
+          <div class="tag">06 网络 · TCP</div>
+          <strong>滑动窗口、丢包与重传</strong>
+          <span>在途数量有上限。丢一个字，后面的先缓存，洞补上才按顺序交出去。</span>
+        </a>
+      </li>
+    </ul>
+    <footer>
+      文字笔记在 <a class="inline" href="https://github.com/luxiang0412/ai-era-cs">GitHub 仓库</a>。
+      这一页只收动画。新做了一节，就在这里加一张卡片。
+    </footer>
+  </main>
+</body>
+</html>

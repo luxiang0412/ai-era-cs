@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TCP 滑动窗口、丢包与重传</title>
+  <style>
+    :root {
+      --bg: #e7e1d6;
+      --paper: #fbf7f0;
+      --ink: #1c1915;
+      --muted: #6d655b;
+      --line: #e4dacb;
+      --teal: #0f6b66;
+      --teal-soft: #e7f3f1;
+      --amber: #9a5714;
+      --amber-soft: #f8ecda;
+      --navy: #2a406c;
+      --red: #9d342c;
+      --ok: #1d7a46;
+      --ok-soft: #e6f4eb;
+      --shadow: 0 16px 40px rgba(70, 48, 20, 0.08);
+      --sans: "WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--sans);
+      background:
+        radial-gradient(900px 420px at 100% -10%, rgba(255, 255, 255, 0.7), transparent 50%),
+        var(--bg);
+    }
+    a { color: var(--teal); }
+    button, input { font-family: inherit; }
+    .sheet { max-width: 1120px; margin: 28px auto 56px; padding: 0 20px; }
+    .top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; }
+    .kicker { margin: 0 0 4px; color: var(--muted); letter-spacing: 0.08em; font-size: 12px; }
+    h1 { margin: 0; font-size: 28px; letter-spacing: -0.02em; }
+    .links { display: flex; gap: 14px; font-size: 14px; }
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      margin-top: 16px; background: var(--paper); border: 1px solid var(--line);
+      border-radius: 16px; padding: 12px; box-shadow: var(--shadow);
+    }
+    button {
+      border: 1px solid var(--line); background: white; border-radius: 999px;
+      padding: 8px 14px; cursor: pointer; font-size: 14px;
+    }
+    button.primary { background: var(--ink); color: white; border-color: var(--ink); }
+    button:disabled { opacity: 0.4; cursor: default; }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+    .slider { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+    .slider strong { color: var(--ink); min-width: 2.6em; font-weight: 600; }
+    input[type="range"] { accent-color: var(--teal); width: 110px; }
+    .clock { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; margin-top: 14px; }
+    .panel, .caption {
+      background: var(--paper); border: 1px solid var(--line); border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    .panel { padding: 14px 14px 16px; }
+    .panel-h { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .panel-h h2, .caption h2 { margin: 0; font-size: 16px; }
+    .panel-h span { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .formula { margin: 8px 0 0; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .formula b { color: var(--ink); font-weight: 600; }
+    .strip-wrap { overflow-x: auto; margin-top: 12px; padding-bottom: 4px; }
+    .cells { position: relative; display: flex; gap: 6px; width: max-content; min-height: 64px; padding: 6px 1px; }
+    .cell {
+      width: 52px; height: 58px; border-radius: 12px; border: 1px solid var(--line);
+      background: white; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .cell .seq { font-size: 10px; color: var(--muted); }
+    .cell .ch { font-size: 18px; line-height: 1.2; }
+    .cell.future { opacity: 0.38; }
+    .cell.open { border-style: dashed; }
+    .cell.inflight { background: var(--teal); border-color: var(--teal); color: white; }
+    .cell.inflight .seq { color: rgba(255, 255, 255, 0.76); }
+    .cell.hole { background: var(--red); border-color: var(--red); color: white; }
+    .cell.hole .seq { color: rgba(255, 255, 255, 0.8); }
+    .cell.acked, .cell.delivered { background: var(--ok-soft); border-color: #b7dcc4; }
+    .cell.buffered { background: var(--amber-soft); border-color: #e4c49a; }
+    .cell.expected { box-shadow: inset 0 0 0 2px var(--teal); }
+    .bracket {
+      position: absolute; top: 6px; bottom: 6px; border: 2px solid var(--navy);
+      border-radius: 14px; pointer-events: none; transition: left 0.28s ease, width 0.28s ease;
+    }
+    .pipe-wrap { margin: 12px 0; }
+    .dir { color: var(--muted); font-size: 12px; margin: 4px 2px; }
+    .pipe {
+      position: relative; height: 92px; border-radius: 16px;
+      background:
+        linear-gradient(#f3eee6, #f3eee6) 0 30px / 100% 2px no-repeat,
+        linear-gradient(#f3eee6, #f3eee6) 0 62px / 100% 2px no-repeat,
+        #f7f3eb;
+      border: 1px dashed #ddd3c3; overflow: hidden;
+    }
+    .packet {
+      position: absolute; min-width: 54px; height: 32px; margin-left: -27px;
+      border-radius: 9px; display: flex; align-items: center; justify-content: center;
+      color: white; font-size: 13px; padding: 0 8px; white-space: nowrap;
+    }
+    .packet.data { background: var(--teal); }
+    .packet.ack { background: var(--amber); height: 26px; margin-top: 3px; }
+    .packet.retx { box-shadow: 0 0 0 2px var(--red); }
+    .packet.poof { background: var(--red); }
+    .sentence { margin: 12px 0 0; font-size: 22px; letter-spacing: 0.12em; }
+    .sentence i { font-style: normal; color: #d9d0c3; }
+    .sentence b { font-weight: 600; color: var(--ok); }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+    .caption { padding: 16px; }
+    .caption p { margin: 8px 0 0; line-height: 1.7; font-size: 15px; }
+    .log { list-style: none; margin: 14px 0 0; padding: 0; font-size: 12px; color: var(--muted); }
+    .log li { padding: 4px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    .foot { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 10px 2px 0; }
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: minmax(0, 1fr); }
+      .panel, .caption { min-width: 0; }
+      .top { flex-direction: column; align-items: flex-start; }
+      .links { margin-top: 6px; }
+      .clock { margin-left: 0; }
+      h1 { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <header class="top">
+      <div>
+        <p class="kicker">06 网络 · TCP</p>
+        <h1>滑动窗口、丢包、重传</h1>
+      </div>
+      <div class="links">
+        <a href="handshake.html">握手和挥手</a>
+        <a href="../../../index.html">全部动画</a>
+      </div>
+    </header>
+    <div class="controls">
+      <button type="button" class="primary" id="play">播放</button>
+      <button type="button" id="back">上一步</button>
+      <button type="button" id="step">下一步</button>
+      <button type="button" id="restart">重来</button>
+      <label class="slider">速度 <strong id="speedLabel">1×</strong>
+        <input id="speed" type="range" min="0.5" max="2.5" step="0.1" value="1" />
+      </label>
+      <label class="slider">丢包率 <strong id="lossLabel">0%</strong>
+        <input id="loss" type="range" min="0" max="0.45" step="0.05" value="0" />
+      </label>
+      <label class="slider">窗口 <strong id="winLabel">4</strong>
+        <input id="win" type="range" min="1" max="6" step="1" value="4" />
+      </label>
+      <div class="clock" id="clock">t = 0.0s</div>
+    </div>
+    <div class="layout">
+      <div>
+        <section class="panel">
+          <div class="panel-h">
+            <h2>发送方</h2>
+            <span id="inflight">在途 0 / 4</span>
+          </div>
+          <div class="strip-wrap"><div class="cells" id="sendCells"></div></div>
+          <p class="formula">未确认 <b id="formula">nextSeq − base = 0</b>，不能超过窗口</p>
+          <div class="pipe-wrap">
+            <div class="dir">数据，从左送到右</div>
+            <div class="pipe" id="pipe"></div>
+            <div class="dir">累积确认，从右回到左。ack = N 表示 N 之前都收到了</div>
+          </div>
+          <div class="panel-h">
+            <h2>接收方</h2>
+            <span id="expect">下一期望 seq = 0</span>
+          </div>
+          <div class="strip-wrap"><div class="cells" id="recvCells"></div></div>
+          <p class="sentence" id="sentence"></p>
+          <div class="legend">
+            <span><i style="background:#0f6b66"></i>在途</span>
+            <span><i style="background:#1d7a46"></i>已确认 / 已交付</span>
+            <span><i style="background:#e4c49a"></i>乱序缓存</span>
+            <span><i style="background:#9d342c"></i>要重传的洞</span>
+            <span><i style="background:white;border:1px dashed #c9bead"></i>窗口里还没发</span>
+          </div>
+        </section>
+      </div>
+      <aside class="caption" aria-live="polite">
+        <h2 id="capTitle"></h2>
+        <p id="capBody"></p>
+        <ul class="log" id="log"></ul>
+      </aside>
+    </div>
+    <p class="foot">空格播放或暂停，左右方向键单步。这里一个字一个序号，方便看窗口怎么滑。真 TCP 的序号是字节偏移，确认同样是累积的。丢包率、窗口一改，就从头再演。默认不丢包，先看滑动，再把丢包率拉到 20% 左右。</p>
+  </main>
+  <script>
+    const TEXT = [..."丢了也要按顺序送到手里"];
+    const ONE_WAY = 900;
+    const RTO = 2300;
+    const DROP_AT = 520;
+    const STAGGER = 180;
+
+    const playBtn = document.getElementById("play");
+    const backBtn = document.getElementById("back");
+    const stepBtn = document.getElementById("step");
+    let state;
+    let history;
+    let acc = 0;
+    let playing = false;
+    let lastTs = 0;
+    let speed = 1;
+    let lossRate = 0;
+    let windowSize = 4;
+    let runId = 0;
+
+    function nextRand(target) {
+      let x = target.rand | 0;
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      target.rand = x >>> 0;
+      return target.rand / 4294967296;
+    }
+
+    function narrate(target, title, body) {
+      target.captionTitle = title;
+      target.caption = body;
+    }
+
+    function pushLog(target, line) {
+      target.log.unshift({ t: target.now, line });
+      if (target.log.length > 8) target.log.length = 8;
+    }
+
+    function outstanding(target) {
+      return target.nextSeq + target.planned.length - target.base;
+    }
+
+    function planSends(target) {
+      while (target.queue.length > 0 && outstanding(target) < target.windowSize) {
+        const t = Math.max(target.now, target.nextSendAt);
+        target.planned.push({ t, ch: target.queue.shift() });
+        target.nextSendAt = t + STAGGER;
+      }
+    }
+
+    function arm(target) {
+      if (target.base >= target.nextSeq || !target.slots[target.base]) {
+        target.timer = null;
+        return;
+      }
+      const deadline = target.slots[target.base].lastSent + RTO;
+      // 窗口滑到一个早就该超时的洞上时，截止时间已经落在过去。
+      // 排到「现在」立刻补发，不能把过期定时器丢掉，否则发送方会停住。
+      target.timer = Math.max(deadline, target.now);
+    }
+
+    function createState() {
+      const target = {
+        now: 0,
+        rand: 0x51edbeef,
+        nextId: 1,
+        text: TEXT.slice(),
+        windowSize,
+        base: 0,
+        nextSeq: 0,
+        queue: TEXT.slice(),
+        planned: [],
+        nextSendAt: 0,
+        slots: {},
+        expected: 0,
+        buffer: {},
+        delivered: [],
+        flights: [],
+        timer: null,
+        ackDue: false,
+        done: false,
+        retx: 0,
+        log: [],
+        captionTitle: "窗口先占住位置",
+        caption: `深蓝框是发送窗口，里面最多 ${windowSize} 个「发出去还没确认」的字。播放后会挨个发出，不用等前一个 ACK 到了再发下一个。把窗口调成 1，就退回停等：发一个，等一个。`,
+      };
+      planSends(target);
+      return target;
+    }
+
+    function launch(target, dir, packet, retx) {
+      const lost = nextRand(target) < lossRate;
+      target.flights.push({
+        id: target.nextId++,
+        dir,
+        packet: { ...packet },
+        start: target.now,
+        dur: ONE_WAY,
+        dropAt: DROP_AT,
+        lost,
+        retx: !!retx,
+        status: "flying",
+      });
+    }
+
+    function markDone(target) {
+      if (target.base === target.text.length) {
+        target.done = true;
+        target.timer = null;
+        target.planned = [];
+        narrate(target, "整句送到了", `接收方交付的是「${target.delivered.join("")}」。窗口、序号和重传做的就是这件事：路上可以丢，上层看到的仍然是按顺序的一整句。`);
+        pushLog(target, "交付完成");
+      }
+    }
+
+    function peekEvent(target) {
+      if (target.done) return null;
+      let best = null;
+      function consider(t, priority, type, extra) {
+        if (t < target.now - 1e-6) return;
+        if (!best || t < best.t - 1e-6 || (Math.abs(t - best.t) < 1e-6 && priority < best.priority)) {
+          best = { t, priority, type, ...extra };
+        }
+      }
+      for (const flight of target.flights) {
+        if (flight.status !== "flying") continue;
+        if (flight.lost) consider(flight.start + flight.dropAt, 0, "drop", { id: flight.id });
+        else consider(flight.start + flight.dur, 0, "arrive", { id: flight.id });
+      }
+      if (target.ackDue) consider(target.now, 1, "flush-ack");
+      if (target.timer != null) consider(target.timer, 2, "timeout");
+      if (target.planned.length) consider(Math.max(target.now, target.planned[0].t), 3, "send");
+      return best;
+    }
+
+    function onData(target, packet) {
+      const { seq, ch } = packet;
+      if (seq === target.expected) {
+        const chain = [seq];
+        target.delivered.push(ch);
+        target.expected += 1;
+        while (target.buffer[target.expected] != null) {
+          target.delivered.push(target.buffer[target.expected]);
+          delete target.buffer[target.expected];
+          chain.push(target.expected);
+          target.expected += 1;
+        }
+        if (chain.length > 1) {
+          narrate(target, "洞补上了", `seq = ${chain[0]} 一到，缓存里的 ${chain.slice(1).join("、")} 按顺序一起交出去。应用层看不到乱序，只看到句子在变长。确认号现在是 ${target.expected}。`);
+          pushLog(target, `补洞，交付到 seq ${target.expected - 1}`);
+        } else {
+          narrate(target, "按序交给上层", `「${ch}」正是接收方在等的 seq = ${seq}，直接交付。确认号走到 ${target.expected}。`);
+          pushLog(target, `交付 seq=${seq}「${ch}」`);
+        }
+      } else if (seq > target.expected) {
+        if (target.buffer[seq] == null) target.buffer[seq] = ch;
+        narrate(target, "先到的先存着", `seq = ${seq}「${ch}」到了，可是 seq = ${target.expected} 还是个洞。先放进缓存。累积确认停在 ${target.expected}，不会跳过去。`);
+        pushLog(target, `缓存 seq=${seq}，还缺 ${target.expected}`);
+      } else {
+        narrate(target, "重复的字", `seq = ${seq} 已经交付过，不再向上交。仍要回 ACK ${target.expected}，因为上一次确认可能在路上丢了。`);
+        pushLog(target, `重复 seq=${seq}，重发 ACK ${target.expected}`);
+      }
+      target.ackDue = true;
+    }
+
+    function onAck(target, packet) {
+      if (packet.ack <= target.base) {
+        narrate(target, "确认号没往前", `又收到 ack = ${packet.ack}，窗口左沿已经在 ${target.base}。重复的确认说明接收方还卡在同一个位置。这个动画不提前重传，只等超时。真 TCP 看到几次重复 ACK，会先把洞补上。`);
+        pushLog(target, `重复 ACK ${packet.ack}`);
+        return;
+      }
+      if (packet.ack > target.nextSeq) return;
+      const previous = target.base;
+      for (let seq = target.base; seq < packet.ack; seq++) delete target.slots[seq];
+      target.base = packet.ack;
+      planSends(target);
+      arm(target);
+      pushLog(target, `ACK ${packet.ack}，左沿 ${previous} → ${target.base}`);
+      if (target.base === target.text.length) {
+        markDone(target);
+        return;
+      }
+      narrate(target, "窗口往右滑", `ack = ${packet.ack} 把 seq ${previous} 到 ${packet.ack - 1} 一起确认了。左沿从 ${previous} 移到 ${target.base}，空位可以继续发。在途数量是 nextSeq − base。`);
+    }
+
+    function applyEvent(target, event) {
+      target.now = event.t;
+      if (event.type === "send") {
+        const item = target.planned.shift();
+        const seq = target.nextSeq++;
+        target.slots[seq] = { ch: item.ch, lastSent: target.now, retries: 0 };
+        launch(target, "fwd", { kind: "DATA", seq, ch: item.ch });
+        arm(target);
+        pushLog(target, `发出 seq=${seq}「${item.ch}」`);
+        if (seq === 0) {
+          narrate(target, "不用停下来等", `seq = 0「${item.ch}」出发了。窗口允许同时有多个未确认的字在路上，所以后面的会紧跟着发出，不用等这个 ACK。`);
+        }
+        return;
+      }
+      if (event.type === "drop") {
+        const flight = target.flights.find((item) => item.id === event.id);
+        flight.status = "lost";
+        const packet = flight.packet;
+        const name = packet.kind === "DATA" ? `DATA seq=${packet.seq}「${packet.ch}」` : `ACK ${packet.ack}`;
+        narrate(target, "这个报文丢了", `${name} 没有到对端。发送方暂时不知道，最早那个没被确认的字会一直占着窗口左沿，直到超时。`);
+        pushLog(target, `丢失 ${name}`);
+        return;
+      }
+      if (event.type === "timeout") {
+        if (target.base >= target.nextSeq || !target.slots[target.base]) {
+          target.timer = null;
+          return;
+        }
+        const seq = target.base;
+        const slot = target.slots[seq];
+        slot.retries += 1;
+        slot.lastSent = target.now;
+        target.retx += 1;
+        launch(target, "fwd", { kind: "DATA", seq, ch: slot.ch }, true);
+        arm(target);
+        narrate(target, "超时，只补那个洞", `seq = ${seq}「${slot.ch}」到点了还没被确认号盖住。只重传它，不把已经在路上的字全部重发。如果后面的字其实已经到了接收方，它们正等着这个洞。`);
+        pushLog(target, `重传 seq=${seq}「${slot.ch}」`);
+        return;
+      }
+      if (event.type === "arrive") {
+        const flight = target.flights.find((item) => item.id === event.id);
+        flight.status = "arrived";
+        if (flight.packet.kind === "DATA") onData(target, flight.packet);
+        else onAck(target, flight.packet);
+        return;
+      }
+      if (event.type === "flush-ack") {
+        target.ackDue = false;
+        launch(target, "back", { kind: "ACK", ack: target.expected });
+        pushLog(target, `回 ACK ${target.expected}`);
+      }
+    }
+
+    function reset() {
+      playing = false;
+      acc = 0;
+      runId += 1;
+      state = createState();
+      history = [structuredClone(state)];
+      render(state.now);
+      updateButtons();
+    }
+
+    function advanceOneEvent() {
+      const event = peekEvent(state);
+      if (!event) return false;
+      applyEvent(state, event);
+      history.push(structuredClone(state));
+      if (history.length > 800) history.shift();
+      return true;
+    }
+
+    function toggle() {
+      if (state.done) reset();
+      playing = !playing;
+      updateButtons();
+    }
+
+    function onStep() {
+      playing = false;
+      acc = 0;
+      advanceOneEvent();
+      render(state.now);
+      updateButtons();
+    }
+
+    function onBack() {
+      if (history.length <= 1) return;
+      playing = false;
+      acc = 0;
+      history.pop();
+      state = structuredClone(history[history.length - 1]);
+      render(state.now);
+      updateButtons();
+    }
+
+    function cellClass(role, seq) {
+      if (role === "send") {
+        if (seq < state.base) return "acked";
+        if (seq < state.nextSeq) {
+          const slot = state.slots[seq];
+          if (slot && seq === state.base && slot.retries > 0) return "hole";
+          return "inflight";
+        }
+        if (seq < state.base + state.windowSize) return "open";
+        return "future";
+      }
+      if (seq < state.expected) return "delivered";
+      if (state.buffer[seq] != null) return "buffered";
+      if (seq === state.expected) return "expected";
+      return "future";
+    }
+
+    function buildCells(id) {
+      const root = document.getElementById(id);
+      root.innerHTML = "";
+      if (id === "sendCells") {
+        const bracket = document.createElement("div");
+        bracket.className = "bracket";
+        bracket.id = "bracket";
+        root.appendChild(bracket);
+      }
+      state.text.forEach((ch, seq) => {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        cell.dataset.seq = String(seq);
+        cell.innerHTML = `<span class="seq">${seq}</span><span class="ch">${ch}</span>`;
+        root.appendChild(cell);
+      });
+    }
+
+    function paintCells(id, role) {
+      for (const cell of document.querySelectorAll(`#${id} .cell`)) {
+        const seq = Number(cell.dataset.seq);
+        cell.className = `cell ${cellClass(role, seq)}`;
+      }
+    }
+
+    function placeBracket() {
+      const bracket = document.getElementById("bracket");
+      const cells = [...document.querySelectorAll("#sendCells .cell")];
+      if (!bracket || !cells.length || state.base >= cells.length) {
+        if (bracket) bracket.style.opacity = "0";
+        return;
+      }
+      const start = cells[state.base];
+      const end = cells[Math.min(state.base + state.windowSize, cells.length) - 1];
+      bracket.style.opacity = "1";
+      bracket.style.left = `${start.offsetLeft}px`;
+      bracket.style.width = `${end.offsetLeft + end.offsetWidth - start.offsetLeft}px`;
+    }
+
+    function flightVisible(flight, displayNow) {
+      if (flight.status === "flying") return true;
+      if (flight.status === "lost" && displayNow < flight.start + flight.dropAt + 700) return true;
+      return false;
+    }
+
+    function syncPackets(displayNow) {
+      const root = document.getElementById("pipe");
+      const visible = state.flights.filter((flight) => flightVisible(flight, displayNow));
+      const ids = new Set(visible.map((flight) => String(flight.id)));
+      for (const child of [...root.children]) {
+        if (!ids.has(child.dataset.id)) child.remove();
+      }
+      for (const flight of visible) {
+        let el = root.querySelector(`[data-id="${flight.id}"]`);
+        if (!el) {
+          el = document.createElement("div");
+          el.dataset.id = String(flight.id);
+          el.className = `packet ${flight.packet.kind === "ACK" ? "ack" : "data"}`;
+          if (flight.retx) el.classList.add("retx");
+          el.textContent = flight.packet.kind === "ACK" ? `ACK ${flight.packet.ack}` : `${flight.packet.seq} ${flight.packet.ch}`;
+          root.appendChild(el);
+        }
+        el.classList.toggle("poof", flight.status === "lost");
+        if (flight.status === "lost") el.textContent = "丢失";
+        const limit = flight.lost || flight.status === "lost" ? flight.dropAt : flight.dur;
+        let progress;
+        if (flight.status === "lost") progress = flight.dropAt / flight.dur;
+        else progress = Math.min(Math.max((displayNow - flight.start) / flight.dur, 0), limit / flight.dur);
+        const x = flight.dir === "fwd" ? progress : 1 - progress;
+        el.style.left = `${10 + x * 80}%`;
+        el.style.top = flight.dir === "fwd" ? "16px" : "50px";
+      }
+    }
+
+    function renderSentence() {
+      const html = state.text.map((ch, index) => (
+        index < state.delivered.length ? `<b>${ch}</b>` : `<i>${ch}</i>`
+      )).join("");
+      document.getElementById("sentence").innerHTML = html;
+    }
+
+    function render(displayNow) {
+      if (document.getElementById("sendCells").dataset.run !== String(runId)) {
+        buildCells("sendCells");
+        buildCells("recvCells");
+        document.getElementById("sendCells").dataset.run = String(runId);
+        document.getElementById("recvCells").dataset.run = String(runId);
+      }
+      paintCells("sendCells", "send");
+      paintCells("recvCells", "recv");
+      placeBracket();
+      const inflight = state.nextSeq - state.base;
+      document.getElementById("inflight").textContent = `在途 ${inflight} / ${state.windowSize}`;
+      document.getElementById("formula").textContent = `nextSeq − base = ${state.nextSeq} − ${state.base} = ${inflight}`;
+      document.getElementById("expect").textContent = `下一期望 seq = ${state.expected}`;
+      renderSentence();
+      syncPackets(displayNow);
+      document.getElementById("capTitle").textContent = state.captionTitle;
+      document.getElementById("capBody").textContent = state.caption;
+      document.getElementById("log").innerHTML = state.log.map((item) => (
+        `<li>${(item.t / 1000).toFixed(1)}s　${item.line}</li>`
+      )).join("");
+      document.getElementById("clock").textContent = `t = ${(displayNow / 1000).toFixed(1)}s`;
+    }
+
+    function updateButtons() {
+      playBtn.textContent = playing ? "暂停" : (state.done ? "重播" : "播放");
+      backBtn.disabled = history.length <= 1;
+      stepBtn.disabled = peekEvent(state) == null;
+    }
+
+    function frame(ts) {
+      if (!lastTs) lastTs = ts;
+      const dt = Math.min(48, ts - lastTs);
+      lastTs = ts;
+      if (playing) {
+        acc += dt * speed;
+        let guard = 0;
+        while (guard++ < 50) {
+          const event = peekEvent(state);
+          if (!event) {
+            playing = false;
+            break;
+          }
+          const wait = event.t - state.now;
+          if (acc + 1e-6 < wait) break;
+          acc -= wait;
+          advanceOneEvent();
+        }
+        updateButtons();
+      }
+      render(state.now + acc);
+      requestAnimationFrame(frame);
+    }
+
+    document.getElementById("play").addEventListener("click", toggle);
+    document.getElementById("step").addEventListener("click", onStep);
+    document.getElementById("back").addEventListener("click", onBack);
+    document.getElementById("restart").addEventListener("click", reset);
+    document.getElementById("speed").addEventListener("input", (event) => {
+      speed = Number(event.target.value);
+      document.getElementById("speedLabel").textContent = `${speed.toFixed(1)}×`;
+    });
+    document.getElementById("loss").addEventListener("input", (event) => {
+      lossRate = Number(event.target.value);
+      document.getElementById("lossLabel").textContent = `${Math.round(lossRate * 100)}%`;
+      reset();
+    });
+    document.getElementById("win").addEventListener("input", (event) => {
+      windowSize = Number(event.target.value);
+      document.getElementById("winLabel").textContent = String(windowSize);
+      reset();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.target.matches("input")) return;
+      if (event.code === "Space") {
+        event.preventDefault();
+        toggle();
+      } else if (event.code === "ArrowRight") {
+        event.preventDefault();
+        onStep();
+      } else if (event.code === "ArrowLeft") {
+        event.preventDefault();
+        onBack();
+      }
+    });
+    window.addEventListener("resize", () => render(state.now + acc));
+
+    function selfCheck(loss = 0) {
+      lossRate = loss;
+      windowSize = 4;
+      reset();
+      let steps = 0;
+      while (peekEvent(state) && steps < 900) {
+        advanceOneEvent();
+        steps += 1;
+      }
+      return {
+        steps,
+        done: state.done,
+        delivered: state.delivered.join(""),
+        expected: TEXT.join(""),
+        retx: state.retx,
+        base: state.base,
+        lost: state.flights.filter((flight) => flight.lost).length,
+      };
+    }
+    window.__selfCheck = selfCheck;
+
+    reset();
+    const selfcheck = new URLSearchParams(location.search).has("selfcheck");
+    if (selfcheck) {
+      const pre = document.createElement("pre");
+      pre.id = "selfcheck-result";
+      const mode = new URLSearchParams(location.search).get("selfcheck");
+      pre.textContent = JSON.stringify(selfCheck(mode === "loss" ? 0.3 : 0));
+      document.body.appendChild(pre);
+    } else {
+      requestAnimationFrame(frame);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TCP 三次握手与四次挥手</title>
+  <style>
+    :root {
+      --bg: #e7e1d6;
+      --paper: #fbf7f0;
+      --ink: #1c1915;
+      --muted: #6d655b;
+      --line: #e4dacb;
+      --teal: #0f6b66;
+      --amber: #9a5714;
+      --navy: #2a406c;
+      --red: #9d342c;
+      --ok: #1d7a46;
+      --shadow: 0 16px 40px rgba(70, 48, 20, 0.08);
+      --sans: "WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      --mono: "WenQuanYi Micro Hei Mono", "WenQuanYi Micro Hei", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--sans);
+      background:
+        radial-gradient(900px 420px at 0% -10%, rgba(255, 255, 255, 0.75), transparent 55%),
+        var(--bg);
+    }
+    a { color: var(--teal); }
+    button, input { font-family: inherit; }
+    .sheet { max-width: 1080px; margin: 28px auto 56px; padding: 0 20px; }
+    .top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; margin-bottom: 16px; }
+    .kicker { margin: 0 0 4px; color: var(--muted); letter-spacing: 0.08em; font-size: 12px; }
+    h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .links { display: flex; gap: 14px; font-size: 14px; }
+    .controls {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      background: var(--paper); border: 1px solid var(--line); border-radius: 16px;
+      padding: 12px; box-shadow: var(--shadow);
+    }
+    button {
+      border: 1px solid var(--line); background: white; color: var(--ink);
+      border-radius: 999px; padding: 8px 14px; cursor: pointer; font-size: 14px;
+    }
+    button:hover { border-color: #c9bead; }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+    button.primary { background: var(--ink); color: white; border-color: var(--ink); }
+    button:disabled { opacity: 0.4; cursor: default; }
+    .slider { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+    .slider strong { color: var(--ink); font-weight: 600; min-width: 3.2em; }
+    input[type="range"] { accent-color: var(--teal); width: 120px; }
+    .clock { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+    .board {
+      margin-top: 14px; background: var(--paper); border: 1px solid var(--line);
+      border-radius: 18px; box-shadow: var(--shadow); padding: 16px 16px 8px;
+    }
+    .heads, .row {
+      display: grid; grid-template-columns: minmax(120px, 180px) 1fr minmax(120px, 180px);
+      gap: 12px; align-items: center;
+    }
+    .head {
+      border-radius: 14px; padding: 10px 12px; background: #f3eee4; min-height: 92px;
+    }
+    .head .name { margin: 0; font-size: 13px; color: var(--muted); }
+    .head .en { margin: 4px 0 0; font-family: var(--mono); font-size: 15px; }
+    .head .zh { margin: 2px 0 0; font-size: 13px; }
+    .head .extra { margin: 6px 0 0; color: var(--amber); font-size: 12px; min-height: 1.2em; }
+    .head.client { box-shadow: inset 3px 0 0 var(--teal); }
+    .head.server { box-shadow: inset 3px 0 0 var(--navy); }
+    .phase {
+      text-align: center; color: var(--muted); font-size: 13px;
+    }
+    .phase b { display: block; color: var(--ink); font-size: 15px; margin-bottom: 2px; }
+    .timeline { max-height: 430px; overflow: auto; margin-top: 8px; padding: 6px 2px 12px; }
+    .row { padding: 6px 4px; border-radius: 10px; }
+    .row.flying { background: rgba(15, 107, 102, 0.07); }
+    .end { min-height: 36px; }
+    .end strong { display: block; font-size: 14px; }
+    .end span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .row.from-server .end.right { text-align: right; }
+    .track { position: relative; height: 28px; }
+    .line {
+      position: absolute; left: 0; right: 0; top: 50%; height: 2px;
+      background: #e5dccf; transform: translateY(-1px);
+    }
+    .row.arrived .line { background: #d3c7b4; }
+    .row.lost .line { background: linear-gradient(90deg, #efc7c2, #efc7c2 60%, transparent 60%); }
+    .row.from-server.lost .line { background: linear-gradient(270deg, #efc7c2, #efc7c2 60%, transparent 60%); }
+    .dot {
+      position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+      border-radius: 50%;
+    }
+    .kind-SYN, .kind-SYNACK { background: var(--teal); box-shadow: 0 0 0 4px rgba(15, 107, 102, 0.16); }
+    .kind-ACK { background: var(--amber); box-shadow: 0 0 0 4px rgba(154, 87, 20, 0.16); }
+    .kind-FIN { background: var(--navy); box-shadow: 0 0 0 4px rgba(42, 64, 108, 0.16); }
+    .bang {
+      display: none; position: absolute; top: -16px; transform: translateX(-50%);
+      color: var(--red); font-size: 12px; white-space: nowrap;
+    }
+    .row.lost .bang { display: block; }
+    .caption {
+      margin-top: 14px; background: var(--paper); border: 1px solid var(--line);
+      border-radius: 18px; padding: 16px 18px 18px; box-shadow: var(--shadow);
+    }
+    .caption h2 { margin: 0 0 8px; font-size: 18px; }
+    .caption p { margin: 0; line-height: 1.7; font-size: 16px; }
+    .foot { margin: 10px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    @media (max-width: 720px) {
+      h1 { font-size: 22px; }
+      .top { flex-direction: column; align-items: flex-start; }
+      .links { margin-top: 6px; }
+      .clock { margin-left: 0; }
+      .heads, .row { grid-template-columns: 92px 1fr 92px; gap: 6px; }
+      .head { padding: 8px; min-height: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <header class="top">
+      <div>
+        <p class="kicker">06 网络 · TCP</p>
+        <h1>三次握手，四次挥手</h1>
+      </div>
+      <div class="links">
+        <a href="sliding-window.html">滑动窗口</a>
+        <a href="../../../index.html">全部动画</a>
+      </div>
+    </header>
+
+    <div class="controls">
+      <button type="button" class="primary" id="play">播放</button>
+      <button type="button" id="back">上一步</button>
+      <button type="button" id="step">下一步</button>
+      <button type="button" id="restart">重来</button>
+      <label class="slider">速度 <strong id="speedLabel">1×</strong>
+        <input id="speed" type="range" min="0.5" max="2.5" step="0.1" value="1" />
+      </label>
+      <label class="slider">丢包率 <strong id="lossLabel">0%</strong>
+        <input id="loss" type="range" min="0" max="0.45" step="0.05" value="0" />
+      </label>
+      <div class="clock" id="clock">t = 0.0s</div>
+    </div>
+
+    <section class="board">
+      <div class="heads">
+        <div class="head client" id="clientHead"></div>
+        <div class="phase" id="phase"></div>
+        <div class="head server" id="serverHead"></div>
+      </div>
+      <div class="timeline" id="timeline"></div>
+    </section>
+
+    <section class="caption" aria-live="polite">
+      <h2 id="capTitle"></h2>
+      <p id="capBody"></p>
+    </section>
+    <p class="foot">空格播放或暂停，左右方向键单步。初始序号这里用 100 和 300，方便心算；真连接里的初始序号是随机的。SYN 和 FIN 各占一个序号。调丢包率会从头再演一次。</p>
+  </main>
+  <script>
+    const ONE_WAY = 1000;
+    const RTO = 2500;
+    const DROP_AT = 620;
+
+    const STATE_ZH = {
+      CLOSED: "关闭",
+      LISTEN: "监听，等连接",
+      SYN_SENT: "已发出 SYN，等回应",
+      SYN_RCVD: "收到 SYN，等最后确认",
+      ESTABLISHED: "连接已建立",
+      FIN_WAIT_1: "已发出 FIN，等确认",
+      FIN_WAIT_2: "等对方也关闭",
+      TIME_WAIT: "等待迟到报文",
+      CLOSE_WAIT: "对方已关，自己还可发",
+      LAST_ACK: "等最后一次确认",
+    };
+
+    const playBtn = document.getElementById("play");
+    const backBtn = document.getElementById("back");
+    const stepBtn = document.getElementById("step");
+    const speedInput = document.getElementById("speed");
+    const lossInput = document.getElementById("loss");
+    let state;
+    let history;
+    let acc = 0;
+    let playing = false;
+    let lastTs = 0;
+    let speed = 1;
+    let lossRate = 0;
+
+    function nextRand(target) {
+      let x = target.rand | 0;
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      target.rand = x >>> 0;
+      return target.rand / 4294967296;
+    }
+
+    function narrate(target, title, body) {
+      target.captionTitle = title;
+      target.caption = body;
+    }
+
+    function createState() {
+      return {
+        now: 0,
+        rand: 0x12345678,
+        nextId: 1,
+        phase: "idle",
+        done: false,
+        client: { state: "CLOSED", unacked: null },
+        server: { state: "LISTEN", unacked: null },
+        flights: [],
+        closeAt: null,
+        serverFinAt: null,
+        timeWaitUntil: null,
+        captionTitle: "还没开始",
+        caption: "两边还没有共同的序号。播放之后，客户端先挑一个初始序号，告诉服务器：我要从这里开始数。SYN 和 FIN 都会占掉一个序号，所以确认号经常是对方的序号加 1。",
+      };
+    }
+
+    function launch(target, from, packet, retx) {
+      const lost = nextRand(target) < lossRate;
+      const flight = {
+        id: target.nextId++,
+        from,
+        packet: { ...packet },
+        start: target.now,
+        dur: ONE_WAY,
+        dropAt: DROP_AT,
+        lost,
+        retx: !!retx,
+        status: "flying",
+      };
+      target.flights.push(flight);
+      const needsTimer = packet.kind === "SYN" || packet.kind === "SYNACK" || packet.kind === "FIN";
+      if (needsTimer) {
+        const side = from === "client" ? target.client : target.server;
+        side.unacked = { packet: { ...packet }, deadline: target.now + RTO };
+      }
+      return flight;
+    }
+
+    function refreshDone(target) {
+      target.done = target.client.state === "CLOSED" && target.server.state === "CLOSED" && target.phase !== "idle";
+      if (target.done) target.phase = "done";
+    }
+
+    function peekEvent(target) {
+      if (target.done) return null;
+      let best = null;
+      function consider(t, priority, type, extra) {
+        if (t < target.now - 1e-6) return;
+        if (!best || t < best.t - 1e-6 || (Math.abs(t - best.t) < 1e-6 && priority < best.priority)) {
+          best = { t, priority, type, ...extra };
+        }
+      }
+      if (target.phase === "idle") consider(0, 5, "connect");
+      for (const flight of target.flights) {
+        if (flight.status !== "flying") continue;
+        if (flight.lost) consider(flight.start + flight.dropAt, 0, "drop", { id: flight.id });
+        else consider(flight.start + flight.dur, 0, "arrive", { id: flight.id });
+      }
+      if (target.client.unacked) consider(target.client.unacked.deadline, 2, "timeout", { side: "client" });
+      if (target.server.unacked) consider(target.server.unacked.deadline, 2, "timeout", { side: "server" });
+      if (target.closeAt != null && target.client.state === "ESTABLISHED") consider(target.closeAt, 4, "close");
+      if (target.serverFinAt != null && target.server.state === "CLOSE_WAIT") consider(target.serverFinAt, 4, "server-fin");
+      if (target.timeWaitUntil != null && target.client.state === "TIME_WAIT") consider(target.timeWaitUntil, 4, "time-wait");
+      return best;
+    }
+
+    function onArrive(target, flight) {
+      const packet = flight.packet;
+      if (flight.from === "client") {
+        if (packet.kind === "SYN") {
+          if (target.server.state === "LISTEN" || target.server.state === "SYN_RCVD") {
+            const first = target.server.state === "LISTEN";
+            target.server.state = "SYN_RCVD";
+            launch(target, "server", { kind: "SYNACK", label: "SYN + ACK", detail: "seq = 300 · ack = 101" });
+            narrate(
+              target,
+              first ? "第二次：SYN + ACK" : "把 SYN + ACK 再送一次",
+              first
+                ? "服务器记下客户端的序号 100，并把自己的初始序号 300 一起送回去。ack = 101 的意思是：100 我收到了（SYN 占一个号），请从 101 继续。服务器进入 SYN_RCVD。它还不知道自己的 300 有没有送到。"
+                : "服务器还停在 SYN_RCVD，说明上次的 SYN + ACK 可能丢了，或者它的确认还没回来。序号不变，再送一次。",
+            );
+          }
+          return;
+        }
+        if (packet.kind === "ACK" && packet.ack === 301) {
+          if (target.server.state === "SYN_RCVD") {
+            target.server.state = "ESTABLISHED";
+            target.server.unacked = null;
+            narrate(target, "握手完成", "ack = 301 到了。服务器知道自己的初始序号已经被听到，进入 ESTABLISHED。两边可以开始传数据。动画在这里停一拍，再演示怎么关。");
+          }
+          return;
+        }
+        if (packet.kind === "FIN" && packet.seq === 101) {
+          if (target.server.state === "ESTABLISHED") {
+            target.server.state = "CLOSE_WAIT";
+            target.serverFinAt = target.now + 800;
+            narrate(target, "先确认，先别急着关", "服务器收到 FIN，回 ack = 102，进入 CLOSE_WAIT。它自己这个方向可能还有字没写完，所以不能把「你关了」和「我也关了」合成同一步。挥手因此常常要四次。");
+          } else {
+            narrate(target, "FIN 又来了", "这是重传的 FIN。服务器把 ack = 102 再回一次，序号含义不变。");
+          }
+          launch(target, "server", { kind: "ACK", ack: 102, label: "ACK", detail: "ack = 102" });
+          return;
+        }
+        if (packet.kind === "ACK" && packet.ack === 302) {
+          target.server.state = "CLOSED";
+          target.server.unacked = null;
+          narrate(target, "服务器关掉了", "最后的确认到达，服务器进入 CLOSED。若这个 ACK 丢了，它会重发 FIN；客户端这时还留在 TIME_WAIT 里，可以再回一次。");
+          refreshDone(target);
+        }
+        return;
+      }
+
+      if (packet.kind === "SYNACK") {
+        if (target.client.state === "SYN_SENT") {
+          target.client.state = "ESTABLISHED";
+          target.client.unacked = null;
+          if (target.closeAt == null) target.closeAt = target.now + 1400;
+        }
+        if (target.client.state === "ESTABLISHED") {
+          launch(target, "client", { kind: "ACK", ack: 301, label: "ACK", detail: "ack = 301" });
+          narrate(
+            target,
+            flight.retx ? "补上第三次握手" : "第三次：ACK",
+            "客户端收到 300，回 ack = 301，告诉服务器：你的初始序号我听到了。少了这一步，服务器会一直重发 SYN + ACK。客户端这边已经是 ESTABLISHED。",
+          );
+        }
+        return;
+      }
+      if (packet.kind === "ACK" && packet.ack === 102) {
+        if (target.client.state === "FIN_WAIT_1") {
+          target.client.state = "FIN_WAIT_2";
+          target.client.unacked = null;
+          narrate(target, "我的方向已经关上", "ack = 102 说明 FIN（序号 101）已被确认。客户端进入 FIN_WAIT_2，继续等服务器说它也发完了。");
+        }
+        return;
+      }
+      if (packet.kind === "FIN" && packet.seq === 301) {
+        const again = target.client.state === "TIME_WAIT";
+        target.client.state = "TIME_WAIT";
+        target.client.unacked = null;
+        target.timeWaitUntil = target.now + RTO + 600;
+        launch(target, "client", { kind: "ACK", ack: 302, label: "ACK", detail: "ack = 302" });
+        narrate(
+          target,
+          again ? "最后的 ACK 可能丢了" : "第四次：ACK，然后等待",
+          again
+            ? "服务器把 FIN 又发来了，多半是没看到 ack = 302。客户端再确认一次，并重新计算 TIME_WAIT。主动关闭的一方要留着，不能先走。"
+            : "客户端确认服务器的 FIN，ack = 302，进入 TIME_WAIT。它不马上消失：最后这个 ACK 若丢失，还得在场重发；旧连接的迟到报文也要等它们过期。",
+        );
+      }
+    }
+
+    function applyEvent(target, event) {
+      target.now = event.t;
+      if (event.type === "connect") {
+        target.phase = "run";
+        target.client.state = "SYN_SENT";
+        launch(target, "client", { kind: "SYN", label: "SYN", detail: "seq = 100" });
+        narrate(target, "第一次：SYN", "客户端选出初始序号 100，发出 SYN，状态变为 SYN_SENT。SYN 占一个序号，所以对方要用 101 来确认。同时开始计时，超时没回音就按原序号重发。");
+        return;
+      }
+      if (event.type === "drop") {
+        const flight = target.flights.find((item) => item.id === event.id);
+        flight.status = "lost";
+        narrate(target, "半路丢了", `${flight.packet.label} 没有到达。对端无感，也不会回确认。这一侧只能等超时，再按原来的序号重发。`);
+        return;
+      }
+      if (event.type === "timeout") {
+        const side = event.side === "client" ? target.client : target.server;
+        if (!side.unacked) return;
+        const who = event.side === "client" ? "客户端" : "服务器";
+        narrate(target, "超时重发", `${who} 没等到能对上的确认，把 ${side.unacked.packet.label} 再发一次。序号不改。一改，对端就会把它当成新的连接，或者新的一段数据。`);
+        launch(target, event.side, side.unacked.packet, true);
+        return;
+      }
+      if (event.type === "arrive") {
+        const flight = target.flights.find((item) => item.id === event.id);
+        flight.status = "arrived";
+        onArrive(target, flight);
+        return;
+      }
+      if (event.type === "close") {
+        target.closeAt = null;
+        target.client.state = "FIN_WAIT_1";
+        launch(target, "client", { kind: "FIN", seq: 101, label: "FIN", detail: "seq = 101" });
+        narrate(target, "客户端开始关闭", "没有应用数据时，SYN 已经占掉 100，FIN 就用 101。客户端进入 FIN_WAIT_1：我不再写新数据了，但还得听对方说完。TCP 是双向的，两个方向分开关。");
+        return;
+      }
+      if (event.type === "server-fin") {
+        target.serverFinAt = null;
+        target.server.state = "LAST_ACK";
+        launch(target, "server", { kind: "FIN", seq: 301, label: "FIN", detail: "seq = 301" });
+        narrate(target, "服务器也发完了", "服务器的 SYN 占了序号 300，所以它的 FIN 是 301。状态变成 LAST_ACK，只等最后的确认。");
+        return;
+      }
+      if (event.type === "time-wait") {
+        target.timeWaitUntil = null;
+        target.client.state = "CLOSED";
+        narrate(target, "TIME_WAIT 结束", "等待结束，客户端进入 CLOSED。这段空等不是故障。主动关闭的一方用它挡住「最后的 ACK 丢了」和「旧报文晚到」这两件事。端口若立刻重用，有时会看到 Address already in use。");
+        refreshDone(target);
+      }
+    }
+
+    function snapshot() {
+      return structuredClone(state);
+    }
+
+    function reset() {
+      playing = false;
+      acc = 0;
+      state = createState();
+      history = [snapshot()];
+      render(0);
+      updateButtons();
+    }
+
+    function advanceOneEvent() {
+      const event = peekEvent(state);
+      if (!event) return false;
+      applyEvent(state, event);
+      history.push(snapshot());
+      if (history.length > 600) history.shift();
+      return true;
+    }
+
+    function toggle() {
+      if (state.done) reset();
+      playing = !playing;
+      updateButtons();
+    }
+
+    function onStep() {
+      playing = false;
+      acc = 0;
+      advanceOneEvent();
+      render(state.now);
+      updateButtons();
+    }
+
+    function onBack() {
+      if (history.length <= 1) return;
+      playing = false;
+      acc = 0;
+      history.pop();
+      state = snapshotFrom(history[history.length - 1]);
+      render(state.now);
+      updateButtons();
+    }
+
+    function snapshotFrom(saved) {
+      return structuredClone(saved);
+    }
+
+    function phaseText() {
+      const client = state.client.state;
+      const server = state.server.state;
+      if (state.phase === "idle") return ["准备", "点播放开始"];
+      if (state.done) return ["结束", "两端都已 CLOSED"];
+      if (client === "TIME_WAIT" || server === "CLOSE_WAIT" || server === "LAST_ACK" || client.startsWith("FIN_")) {
+        return ["四次挥手", "两个方向分开关"];
+      }
+      if (client === "ESTABLISHED" && server === "ESTABLISHED") return ["已连接", "可以传数据了"];
+      return ["三次握手", "先把序号对齐"];
+    }
+
+    function remainText(displayNow) {
+      if (state.client.state !== "TIME_WAIT" || state.timeWaitUntil == null) return "";
+      const left = Math.max(0, state.timeWaitUntil - displayNow);
+      return `TIME_WAIT 还要 ${(left / 1000).toFixed(1)}s`;
+    }
+
+    function renderHeads(displayNow) {
+      const client = state.client.state;
+      const server = state.server.state;
+      document.getElementById("clientHead").innerHTML =
+        `<p class="name">客户端 · 主动打开</p><p class="en">${client}</p><p class="zh">${STATE_ZH[client]}</p><p class="extra">${remainText(displayNow)}</p>`;
+      document.getElementById("serverHead").innerHTML =
+        `<p class="name">服务器 · 被动打开</p><p class="en">${server}</p><p class="zh">${STATE_ZH[server]}</p><p class="extra"></p>`;
+      const phase = phaseText();
+      document.getElementById("phase").innerHTML = `<b>${phase[0]}</b>${phase[1]}`;
+    }
+
+    function buildRow(flight) {
+      const row = document.createElement("div");
+      row.dataset.id = String(flight.id);
+      row.className = `row from-${flight.from}`;
+      const label = `<strong>${flight.packet.label}</strong><span>${flight.packet.detail}${flight.retx ? " · 重传" : ""}</span>`;
+      row.innerHTML = `
+        <div class="end left">${flight.from === "client" ? label : ""}</div>
+        <div class="track"><div class="line"></div><div class="dot kind-${flight.packet.kind}"></div><div class="bang">丢失</div></div>
+        <div class="end right">${flight.from === "server" ? label : ""}</div>`;
+      return row;
+    }
+
+    function syncRows() {
+      const root = document.getElementById("timeline");
+      const ids = new Set(state.flights.map((flight) => String(flight.id)));
+      for (const child of [...root.children]) {
+        if (!ids.has(child.dataset.id)) child.remove();
+      }
+      let added = false;
+      for (const flight of state.flights) {
+        let row = root.querySelector(`[data-id="${flight.id}"]`);
+        if (!row) {
+          row = buildRow(flight);
+          root.appendChild(row);
+          added = true;
+        }
+        row.classList.toggle("flying", flight.status === "flying");
+        row.classList.toggle("arrived", flight.status === "arrived");
+        row.classList.toggle("lost", flight.status === "lost");
+      }
+      if (added) root.scrollTop = root.scrollHeight;
+    }
+
+    function position(displayNow) {
+      for (const flight of state.flights) {
+        const row = document.querySelector(`.row[data-id="${flight.id}"]`);
+        if (!row) continue;
+        const end = flight.lost || flight.status === "lost" ? flight.dropAt : flight.dur;
+        let progress;
+        if (flight.status === "arrived") progress = 1;
+        else if (flight.status === "lost") progress = flight.dropAt / flight.dur;
+        else progress = Math.min(Math.max((displayNow - flight.start) / flight.dur, 0), end / flight.dur);
+        const x = flight.from === "client" ? progress : 1 - progress;
+        row.querySelector(".dot").style.left = `${x * 100}%`;
+        row.querySelector(".bang").style.left = `${x * 100}%`;
+      }
+    }
+
+    function render(displayNow) {
+      renderHeads(displayNow);
+      syncRows();
+      position(displayNow);
+      document.getElementById("capTitle").textContent = state.captionTitle;
+      document.getElementById("capBody").textContent = state.caption;
+      document.getElementById("clock").textContent = `t = ${(displayNow / 1000).toFixed(1)}s`;
+    }
+
+    function updateButtons() {
+      playBtn.textContent = playing ? "暂停" : (state.done ? "重播" : "播放");
+      backBtn.disabled = history.length <= 1;
+      stepBtn.disabled = peekEvent(state) == null;
+    }
+
+    function frame(ts) {
+      if (!lastTs) lastTs = ts;
+      const dt = Math.min(48, ts - lastTs);
+      lastTs = ts;
+      if (playing) {
+        acc += dt * speed;
+        let guard = 0;
+        while (guard++ < 40) {
+          const event = peekEvent(state);
+          if (!event) {
+            playing = false;
+            break;
+          }
+          const wait = event.t - state.now;
+          if (acc + 1e-6 < wait) break;
+          acc -= wait;
+          advanceOneEvent();
+        }
+        updateButtons();
+      }
+      render(state.now + acc);
+      requestAnimationFrame(frame);
+    }
+
+    document.getElementById("play").addEventListener("click", toggle);
+    document.getElementById("step").addEventListener("click", onStep);
+    document.getElementById("back").addEventListener("click", onBack);
+    document.getElementById("restart").addEventListener("click", reset);
+    speedInput.addEventListener("input", () => {
+      speed = Number(speedInput.value);
+      document.getElementById("speedLabel").textContent = `${speed.toFixed(1)}×`;
+    });
+    lossInput.addEventListener("input", () => {
+      lossRate = Number(lossInput.value);
+      document.getElementById("lossLabel").textContent = `${Math.round(lossRate * 100)}%`;
+      reset();
+    });
+    window.addEventListener("keydown", (event) => {
+      if (event.target.matches("input")) return;
+      if (event.code === "Space") {
+        event.preventDefault();
+        toggle();
+      } else if (event.code === "ArrowRight") {
+        event.preventDefault();
+        onStep();
+      } else if (event.code === "ArrowLeft") {
+        event.preventDefault();
+        onBack();
+      }
+    });
+
+    function selfCheck(loss = 0) {
+      lossRate = loss;
+      reset();
+      let steps = 0;
+      const limit = loss > 0 ? 120 : 40;
+      while (peekEvent(state) && steps < limit) {
+        advanceOneEvent();
+        steps += 1;
+      }
+      return {
+        steps,
+        done: state.done,
+        client: state.client.state,
+        server: state.server.state,
+        kinds: state.flights.map((flight) => `${flight.packet.kind}:${flight.status}:${flight.lost ? "lost" : "ok"}`),
+      };
+    }
+    window.__selfCheck = selfCheck;
+
+    reset();
+    const selfcheck = new URLSearchParams(location.search).has("selfcheck");
+    if (selfcheck) {
+      const pre = document.createElement("pre");
+      pre.id = "selfcheck-result";
+      const mode = new URLSearchParams(location.search).get("selfcheck");
+      pre.textContent = JSON.stringify(selfCheck(mode === "loss" ? 0.35 : 0));
+      document.body.appendChild(pre);
+    } else {
+      requestAnimationFrame(frame);
+    }
+  </script>
+</body>
+</html>
