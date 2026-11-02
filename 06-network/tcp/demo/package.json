@@ -1,0 +1,10 @@
+{
+  "name": "tcp-reliable-demo",
+  "private": true,
+  "type": "module",
+  "description": "在 UDP 上演示的简化可靠传输：序号、累积确认、超时重传、滑动窗口。",
+  "scripts": {
+    "start": "node simulate.js",
+    "check": "node selfcheck.js"
+  }
+}
