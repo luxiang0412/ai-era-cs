@@ -27,10 +27,10 @@ jobs:
       - name: Assemble site
         run: |
           rm -rf _site
-          mkdir -p _site/06-network/tcp/viz
+          mkdir -p _site/08-computer-networks/tcp/viz
           cp index.html _site/index.html
           cp .nojekyll _site/.nojekyll
-          cp 06-network/tcp/viz/*.html _site/06-network/tcp/viz/
+          cp 08-computer-networks/tcp/viz/*.html _site/08-computer-networks/tcp/viz/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
